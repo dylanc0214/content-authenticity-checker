@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react'; // Added useEffect
 
 // --- Constants ---
 const AI_DETECTOR_TAB = 'ai';
@@ -7,205 +7,285 @@ const PARAPHRASE_CHECKER_TAB = 'paraphrase';
 // --- Main App Component ---
 export default function App() {
     const [activeTab, setActiveTab] = useState(AI_DETECTOR_TAB);
-    const [inputText, setInputText] = useState(''); // Tracks initial textarea input
-    const [isLoading, setIsLoading] = useState(false);
-    const [error, setError] = useState(null);
+    const [inputText, setInputText] = useState(''); // Tracks initial user input
+    const [isLoading, setIsLoading] = useState(false); // Loading for analysis
+    const [error, setError] = useState(null); // Error for analysis
     const [aiResult, setAiResult] = useState(null);
     const [paraphraseResult, setParaphraseResult] = useState(null);
     const inputRef = useRef(null); // Ref for textarea or div
     const [highlightedContent, setHighlightedContent] = useState(''); // HTML for the div
 
-    // --- API Call: AI Detector ---
-    // The backend now handles the prompt/schema details
+    // --- NEW States for Paraphrasing ---
+    const [isParaphrasing, setIsParaphrasing] = useState(false);
+    const [paraphraseError, setParaphraseError] = useState(null);
+    const [currentTextInEditor, setCurrentTextInEditor] = useState(''); // Tracks text currently displayed
+
+
+    // --- API Call: AI Detector (Unchanged) ---
     const callGeminiApi = async (text, retries = 3, delay = 1000) => {
-        // Frontend just sends the text in the expected payload structure
-        const payload = {
-            contents: [{ parts: [{ text: text }] }]
-            // System prompt and schema are now defined ONLY in the backend api/check-ai.js
-        };
-
+        const payload = { contents: [{ parts: [{ text: text }] }] };
         try {
-            // Backend URL remains the same
-            const response = await fetch('/api/check-ai', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload) // Send the simplified payload
-            });
-
-            if (!response.ok) {
-                // Try to parse error JSON, fallback to text
-                let errorBody;
-                try { errorBody = await response.json(); }
-                catch (e) { errorBody = { error: await response.text() }; }
-                throw new Error(errorBody.error || `API Error: ${response.status}`);
-            }
+            // Assumes your check-ai endpoint handles the system prompt and schema
+            const response = await fetch('/api/check-ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            if (!response.ok) { let errorBody; try { errorBody = await response.json(); } catch (e) { errorBody = { error: await response.text() }; } throw new Error(errorBody.error || `API Error: ${response.status}`); }
             const result = await response.json();
-
-            // Check the structure of the *actual* response from the backend
+            // Check the actual response structure from your /api/check-ai
             if (result.candidates && result.candidates[0]?.content?.parts?.[0]?.text) {
-                // The text part contains the JSON string we need to parse
                 const jsonText = result.candidates[0].content.parts[0].text;
-                try {
-                    return JSON.parse(jsonText); // Parse the JSON string
-                } catch(parseError) {
-                    console.error("Failed to parse JSON response from backend:", jsonText, parseError);
-                    throw new Error("Received malformed data from AI detector.");
-                }
+                try { return JSON.parse(jsonText); } // Parse the JSON string
+                catch(parseError) { console.error("Failed to parse JSON response from /api/check-ai:", jsonText, parseError); throw new Error("Malformed data received from AI detector backend."); }
             } else {
-                // Handle cases where the structure is not as expected
-                console.error("Unexpected API response structure from backend:", result);
-                // Provide a more specific error if possible
-                let errorMsg = "Invalid response from AI detector.";
-                if (result.promptFeedback?.blockReason) {
-                    errorMsg = `Request blocked: ${result.promptFeedback.blockReason}`;
-                } else if (!result.candidates || result.candidates.length === 0) {
-                    errorMsg = "AI detector did not provide a response candidate.";
-                }
+                console.error("Unexpected API response structure from /api/check-ai:", result);
+                let errorMsg = "Invalid response structure from AI detector backend.";
+                // Add more specific error handling if possible based on your backend structure
+                if (result.promptFeedback?.blockReason) { errorMsg = `Request blocked by AI detector backend: ${result.promptFeedback.blockReason}`; }
+                else if (!result.candidates || result.candidates.length === 0) { errorMsg = "AI detector backend provided no response candidate."; }
                 throw new Error(errorMsg);
             }
         } catch (err) {
             // Keep existing retry logic
-            if (retries > 0 && err.message.includes("429")) { // Basic rate limit check
-                await new Promise(res => setTimeout(res, delay));
-                return callGeminiApi(text, retries - 1, delay * 2);
+            if (retries > 0 && err.message.includes("429")) { await new Promise(res => setTimeout(res, delay)); return callGeminiApi(text, retries - 1, delay * 2); }
+            else { console.error("AI Detector API Call Error:", err); throw err; } // Log and re-throw
+        }
+    };
+
+    // --- NEW API Call: Paraphrase Text ---
+    const callParaphraseApi = async (textToParaphrase, retries = 3, delay = 1000) => {
+        try {
+            const response = await fetch('/api/paraphrase-text', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ textToParaphrase }) // Send text in correct format
+            });
+
+            if (!response.ok) {
+                let errorBody;
+                try { errorBody = await response.json(); }
+                catch (e) { errorBody = { error: await response.text() }; } // Fallback
+                // Give specific error for safety blocks
+                if (response.status === 400 && errorBody.error && errorBody.error.includes("blocked")) {
+                    throw new Error(errorBody.error); // Show the block reason
+                }
+                throw new Error(errorBody.error || `API Error: ${response.status}`);
+            }
+
+            const result = await response.json();
+
+            if (result && result.paraphrasedText) {
+                return result.paraphrasedText; // Return just the text string
             } else {
-                console.error("AI Detector API Error:", err); // Log the actual error
-                throw err; // Re-throw the error
+                console.error("Unexpected paraphrase response:", result);
+                throw new Error("Failed to get paraphrased text.");
+            }
+        } catch (err) {
+            // Basic retry for rate limits, could be expanded
+            if (retries > 0 && err.message.includes("429")) {
+                await new Promise(res => setTimeout(res, delay));
+                return callParaphraseApi(textToParaphrase, retries - 1, delay * 2);
+            } else {
+                console.error("Paraphrase API Error:", err);
+                throw err; // Re-throw other errors
             }
         }
     };
 
-    // --- API Call: Paraphrase Checker (SIMULATED - unchanged) ---
-    const simulateParaphraseCheck = (text) => {
-        return new Promise((resolve) => {
-            setTimeout(() => {
-                resolve({
-                    plagiarismScore: Math.floor(Math.random() * 25) + 5,
-                    sources: [{ url: 'https://www.simulated-source-one.com/article/example', snippet: '...this part of the text seems very similar...', matchPercent: 12 }, { url: 'https://www.fake-journal-entry.org/page/2', snippet: '...potential match for the phrase...', matchPercent: 8 }]
-                });
-            }, 1500);
-        });
-    };
 
-    // --- Helper to escape Regex characters ---
+    // --- API Call: Paraphrase Checker (SIMULATED - unchanged) ---
+    const simulateParaphraseCheck = (text) => { return new Promise((resolve) => { setTimeout(() => { resolve({ plagiarismScore: Math.floor(Math.random() * 25) + 5, sources: [{ url: 'https://www.simulated-source-one.com/article/example', snippet: '...', matchPercent: 12 }, { url: 'https://www.fake-journal-entry.org/page/2', snippet: '...', matchPercent: 8 }] }); }, 1500); }); };
+
+    // --- Helper to escape Regex characters (Unchanged) ---
     const escapeRegExp = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-    // --- Updated Highlighting Function ---
+    // --- Updated Highlighting Function (Handles new structure) ---
     const generateHighlightedHtml = (originalText, highConfidence = [], mediumConfidence = []) => {
         let highlightedText = originalText;
-        // Sanitize basic HTML entities FIRST
-        highlightedText = highlightedText
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;");
+        // Basic sanitization
+        highlightedText = highlightedText.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        highlightedText = highlightedText.replace(/\n/g, '<br />'); // Handle newlines
 
-        // Replace newlines AFTER sanitizing, BEFORE highlighting
-        highlightedText = highlightedText.replace(/\n/g, '<br />');
-
-        // Make sure inputs are arrays, even if API returns null/undefined
         const highSentences = Array.isArray(highConfidence) ? highConfidence : [];
         const mediumSentences = Array.isArray(mediumConfidence) ? mediumConfidence : [];
 
-        // Apply HIGH confidence highlights first (White)
+        // Apply HIGH confidence first
         if (highSentences.length > 0) {
             highSentences.forEach(sentence => {
-                // Sanitize sentence before using in regex
                 const sanitizedSentence = sentence.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
                 try {
-                    // Use try-catch for regex creation in case of complex/invalid sentences
                     const regex = new RegExp(escapeRegExp(sanitizedSentence), 'g');
                     highlightedText = highlightedText.replace(regex, `<mark class="ai-highlight-high">$&</mark>`);
-                } catch (e) {
-                    console.error("Regex error for high sentence:", sentence, e);
-                    // Skip highlighting this sentence if regex fails
-                }
+                } catch (e) { console.error("Regex error high:", sentence, e); }
             });
         }
 
-        // Apply MEDIUM confidence highlights second (Grey)
-        // Avoid highlighting text already marked as high confidence.
+        // Apply MEDIUM confidence, avoiding double highlighting
         if (mediumSentences.length > 0) {
             let processedText = '';
-            // Split text by high highlights to avoid double-highlighting
+            // Split by high highlights to process segments in between
             const segments = highlightedText.split(/(<mark class="ai-highlight-high">.*?<\/mark>)/);
 
             segments.forEach((segment) => {
-                // Only process segments that are NOT already high highlights
                 if (!segment.startsWith('<mark class="ai-highlight-high">')) {
                     let currentSegment = segment;
                     mediumSentences.forEach(sentence => {
                         const sanitizedSentence = sentence.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
                         try {
+                            // Important: Only replace if the sentence IS NOT already inside a high-highlight tag added previously
+                            // This simple regex replace might still overlap if medium sentence contains part of high one,
+                            // but prevents direct double-wrapping. More robust solution would involve DOM parsing.
                             const regex = new RegExp(escapeRegExp(sanitizedSentence), 'g');
-                            currentSegment = currentSegment.replace(regex, `<mark class="ai-highlight-medium">$&</mark>`);
-                        } catch (e) {
-                            console.error("Regex error for medium sentence:", sentence, e);
-                        }
+                            currentSegment = currentSegment.replace(regex, (match) => {
+                                // Basic check to avoid re-highlighting inside high marks, might need refinement
+                                if (currentSegment.substring(currentSegment.indexOf(match) - 30, currentSegment.indexOf(match)).includes('ai-highlight-high')) {
+                                    return match; // Don't highlight if likely already inside a high mark
+                                }
+                                return `<mark class="ai-highlight-medium">${match}</mark>`;
+                            });
+                        } catch (e) { console.error("Regex error medium:", sentence, e); }
                     });
-                    processedText += currentSegment; // Add processed segment
+                    processedText += currentSegment;
                 } else {
-                    processedText += segment; // Add back the high highlight untouched
+                    processedText += segment; // Add back high highlight untouched
                 }
             });
-            highlightedText = processedText; // Update the final text
+            highlightedText = processedText;
         }
 
         return highlightedText;
     };
 
+    // --- Effect to update currentTextInEditor when highlightedContent changes ---
+    // Needed to get the plain text for the paraphrase function
+    useEffect(() => {
+        if (inputRef.current) {
+            // Use innerText to get text without HTML tags from the div
+            setCurrentTextInEditor(inputRef.current.innerText);
+        }
+        // If not using div (initial state or error), sync with inputText
+        else if (!hasResult && !highlightedContent) {
+            setCurrentTextInEditor(inputText);
+        }
+    }, [highlightedContent, inputText, hasResult]); // Added dependencies
+
 
     // --- Event Handlers ---
     const handleSubmit = async () => {
-        // Get text consistently from the ref, whether it's textarea or div
-        const currentText = inputRef.current ? (inputRef.current.tagName === 'TEXTAREA' ? inputRef.current.value : inputRef.current.innerText) : '';
-        if (!currentText.trim()) {
+        let currentText = inputText; // Start with state
+        if (inputRef.current) { // Prefer text currently in the editor if it exists
+            currentText = inputRef.current.tagName === 'TEXTAREA' ? inputRef.current.value : inputRef.current.innerText;
+        }
+
+        if (!currentText || !currentText.trim()) { // Check if currentText is null or empty after trim
             setError("Please enter some text to check.");
-            setHighlightedContent(generateHighlightedHtml('', [], [])); // Clear highlights
+            setHighlightedContent(generateHighlightedHtml('', [], []));
+            setCurrentTextInEditor('');
             return;
         }
 
         setIsLoading(true);
         setError(null);
+        setParaphraseError(null);
         setAiResult(null);
         setParaphraseResult(null);
-        // Show plain text (HTML formatted) while loading
+        // Display plain text version (HTML formatted) while loading
         setHighlightedContent(generateHighlightedHtml(currentText, [], []));
+        setCurrentTextInEditor(currentText); // Update editor text state immediately
 
         try {
             if (activeTab === AI_DETECTOR_TAB) {
                 const result = await callGeminiApi(currentText);
                 setAiResult(result);
-                // Generate HTML with new gradient highlighting, ensure arrays exist
                 const html = generateHighlightedHtml(
                     currentText,
-                    result.highConfidenceSentences || [],
-                    result.mediumConfidenceSentences || []
+                    result.highConfidenceSentences, // Use correct property names from API
+                    result.mediumConfidenceSentences
                 );
                 setHighlightedContent(html);
+                // CurrentTextInEditor is updated via useEffect based on highlightedContent
             } else if (activeTab === PARAPHRASE_CHECKER_TAB) {
                 const result = await simulateParaphraseCheck(currentText);
                 setParaphraseResult(result);
-                const html = generateHighlightedHtml(currentText, [], []); // No highlights for paraphrase
+                const html = generateHighlightedHtml(currentText, [], []);
                 setHighlightedContent(html);
+                // CurrentTextInEditor is updated via useEffect
             }
         } catch (err) {
-            setError(`Failed to get result: ${err.message}. Please try again.`);
+            setError(`Analysis failed: ${err.message}. Please try again.`);
             const html = generateHighlightedHtml(currentText, [], []); // Show plain text on error
             setHighlightedContent(html);
+            // CurrentTextInEditor is updated via useEffect
         } finally {
             setIsLoading(false);
         }
     };
+
+    // --- Handler for Paraphrase Button ---
+    const handleParaphraseClick = async () => {
+        // Use the state variable holding the plain text
+        if (!currentTextInEditor || currentTextInEditor.trim() === '') {
+            setParaphraseError("No text available to paraphrase.");
+            return;
+        }
+
+        setIsParaphrasing(true);
+        setParaphraseError(null);
+        setError(null); // Clear analysis error
+
+        try {
+            const paraphrased = await callParaphraseApi(currentTextInEditor); // Paraphrase the plain text
+
+            // Update the displayed content with the NEW paraphrased text
+            setHighlightedContent(generateHighlightedHtml(paraphrased, [], [])); // Display as plain HTML
+            setInputText(paraphrased); // Update the underlying state (for textarea fallback)
+            // currentTextInEditor will be updated by the useEffect
+
+            // Clear previous results as the text has changed
+            setAiResult(null);
+            setParaphraseResult(null);
+
+            // --- Optional: Automatically re-run AI check ---
+            // Let's add a small delay before re-analyzing for better UX
+            /*
+            setTimeout(async () => {
+                try {
+                   setIsLoading(true); // Show analysis spinner
+                   setError(null); // Clear previous analysis error
+                   const newAiResult = await callGeminiApi(paraphrased);
+                   setAiResult(newAiResult);
+                   const newHtml = generateHighlightedHtml(paraphrased, newAiResult.highConfidenceSentences, newAiResult.mediumConfidenceSentences);
+                   setHighlightedContent(newHtml);
+                } catch (reanalysisError) {
+                    setError(`Re-analysis failed: ${reanalysisError.message}`);
+                    // Keep the paraphrased (but unhighlighted) text visible
+                    setHighlightedContent(generateHighlightedHtml(paraphrased, [], []));
+                } finally {
+                    setIsLoading(false);
+                }
+            }, 500); // 500ms delay
+            */
+            // --- End Optional Re-analysis ---
+
+
+        } catch(err) {
+            setParaphraseError(`Paraphrasing failed: ${err.message}`);
+            // Keep the original highlighted text visible on error
+        } finally {
+            setIsParaphrasing(false);
+        }
+    };
+
 
     const handleTabChange = (tab) => {
         setActiveTab(tab);
         setAiResult(null);
         setParaphraseResult(null);
         setError(null);
+        setParaphraseError(null);
         setIsLoading(false);
-        // Reset highlights to plain text when switching tabs
+        setIsParaphrasing(false);
+        // Reset highlights based on the text currently in view
         const currentText = inputRef.current ? (inputRef.current.tagName === 'TEXTAREA' ? inputRef.current.value : inputRef.current.innerText) : inputText;
         setHighlightedContent(generateHighlightedHtml(currentText, [], []));
+        setCurrentTextInEditor(currentText); // Ensure state matches view
     };
 
     const hasResult = aiResult || paraphraseResult;
@@ -221,7 +301,7 @@ export default function App() {
                 </header>
                 <nav className="flex bg-gray-blue/50 border-b border-gray-700">
                     <TabButton title="AI Detector" isActive={activeTab === AI_DETECTOR_TAB} onClick={() => handleTabChange(AI_DETECTOR_TAB)} />
-                    <TabButton title="Paraphrase Checker" isActive={activeTab === PARAPHRASE_CHECKER_TAB} onClick={() => handleTabChange(PARAPHRASE_CHECKER_TAB)} />
+                    <TabButton title="Plagiarism Checker" isActive={activeTab === PARAPHRASE_CHECKER_TAB} onClick={() => handleTabChange(PARAPHRASE_CHECKER_TAB)} />
                 </nav>
 
                 {/* --- Main Content Grid --- */}
@@ -230,12 +310,13 @@ export default function App() {
                     {/* --- Column 1: Text Input Area --- */}
                     <div className="p-6 md:p-8 flex flex-col">
                         {/* Input Div/Textarea */}
-                        {hasResult ? (
+                        {hasResult || highlightedContent ? (
                             <div
                                 ref={inputRef}
-                                className="w-full h-96 p-4 border border-gray-700 rounded-lg bg-gray-900 text-gray-200 focus:outline-none focus:ring-2 focus:ring-milk overflow-y-auto flex-grow prose prose-invert max-w-none prose-mark:p-0 prose-mark:rounded-none prose-mark:bg-opacity-100" // Tailwind prose for better text formatting, reset mark padding/radius
-                                dangerouslySetInnerHTML={{ __html: highlightedContent }}
-                                contentEditable={false} // Make it non-editable after analysis
+                                key={highlightedContent} // Force re-render
+                                className="w-full h-96 p-4 border border-gray-700 rounded-lg bg-gray-900 text-gray-200 focus:outline-none focus:ring-2 focus:ring-milk overflow-y-auto flex-grow prose prose-invert max-w-none prose-mark:p-0 prose-mark:rounded-none prose-mark:bg-opacity-100" // Reset mark styles locally
+                                dangerouslySetInnerHTML={{ __html: highlightedContent || generateHighlightedHtml(inputText, [], []) }}
+                                contentEditable={false} // Display only, not editable after result
                                 suppressContentEditableWarning={true}
                             />
                         ) : (
@@ -244,27 +325,36 @@ export default function App() {
                                 className="w-full h-96 p-4 border border-gray-700 rounded-lg bg-gray-900 text-gray-200 focus:outline-none focus:ring-2 focus:ring-milk resize-none placeholder-gray-500 flex-grow"
                                 placeholder="Paste text here to check..."
                                 value={inputText}
-                                onChange={(e) => setInputText(e.target.value)}
-                                disabled={isLoading}
+                                onChange={(e) => {
+                                    setInputText(e.target.value);
+                                    setCurrentTextInEditor(e.target.value);
+                                    // No need to update highlightedContent here unless you want instant preview
+                                }}
+                                disabled={isLoading || isParaphrasing}
                             />
                         )}
 
-                        {/* Highlight Legend (only for AI tab when results exist) */}
+                        {/* Highlight Legend */}
                         {activeTab === AI_DETECTOR_TAB && hasResult && aiResult && (
                             <HighlightLegend />
                         )}
 
-                        {/* Analyze Button and Error Message */}
+                        {/* Analyze Button and Error Messages */}
                         <button
                             onClick={handleSubmit}
-                            disabled={isLoading}
-                            className="w-full mt-4 p-4 bg-milk text-gray-blue font-semibold rounded-lg shadow-md hover:bg-opacity-90 transition duration-300 disabled:bg-gray-600 disabled:cursor-not-allowed flex justify-center items-center"
+                            disabled={isLoading || isParaphrasing}
+                            className="w-full mt-4 p-4 bg-milk text-gray-blue font-semibold rounded-lg shadow-md hover:bg-opacity-90 transition duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center"
                         >
-                            {isLoading ? <Spinner /> : 'Analyze Text'}
+                            {isLoading ? <Spinner text="Analyzing..." /> : 'Analyze Text'}
                         </button>
                         {error && (
-                            <div className="mt-4 p-3 bg-red-900/50 border border-red-700 text-red-300 rounded-lg text-sm"> {/* Smaller error text */}
+                            <div className="mt-2 p-3 bg-red-900/50 border border-red-700 text-red-300 rounded-lg text-sm">
                                 {error}
+                            </div>
+                        )}
+                        {paraphraseError && (
+                            <div className="mt-2 p-3 bg-yellow-900/50 border border-yellow-700 text-yellow-300 rounded-lg text-sm">
+                                {paraphraseError}
                             </div>
                         )}
                     </div>
@@ -272,9 +362,23 @@ export default function App() {
                     {/* --- Column 2: Results Area --- */}
                     {hasResult && (
                         <div className="p-6 md:p-8 border-t md:border-t-0 md:border-l border-gray-700">
-                            {isLoading && <div className="text-center text-gray-400 h-full flex items-center justify-center">Checking...</div>}
-                            {!isLoading && activeTab === AI_DETECTOR_TAB && aiResult && <AiResultDisplay result={aiResult} />}
-                            {!isLoading && activeTab === PARAPHRASE_CHECKER_TAB && paraphraseResult && <ParaphraseResultDisplay result={paraphraseResult} />}
+                            {/* Show specific loading state */}
+                            {(isLoading || isParaphrasing) && (
+                                <div className="text-center text-gray-400 h-full flex items-center justify-center">
+                                    {isParaphrasing ? 'Paraphrasing...' : 'Checking...'}
+                                </div>
+                            )}
+                            {/* Show results only when not loading */}
+                            {!isLoading && !isParaphrasing && activeTab === AI_DETECTOR_TAB && aiResult && (
+                                <AiResultDisplay
+                                    result={aiResult}
+                                    onParaphraseClick={handleParaphraseClick}
+                                    isParaphrasing={isParaphrasing}
+                                />
+                            )}
+                            {!isLoading && !isParaphrasing && activeTab === PARAPHRASE_CHECKER_TAB && paraphraseResult && (
+                                <ParaphraseResultDisplay result={paraphraseResult} />
+                            )}
                         </div>
                     )}
                 </div>
@@ -285,57 +389,59 @@ export default function App() {
 
 // --- Helper Components ---
 
-// Highlight Legend Component
-function HighlightLegend() {
-    return (
-        <div className="mt-3 text-xs text-gray-400 highlight-legend flex items-center space-x-4">
-            <span>Key:</span>
-            <div className="flex items-center">
-                <span style={{ backgroundColor: '#FFFFFF', color: '#2b323f', padding: '1px 4px', borderRadius: '3px', marginRight: '5px', fontWeight: '500' }}>White</span> - High Confidence AI
-            </div>
-            <div className="flex items-center">
-                <span style={{ backgroundColor: '#4b5563', color: '#FDFDF1', padding: '1px 4px', borderRadius: '3px', marginRight: '5px' }}>Grey</span> - Medium Confidence AI
-            </div>
-        </div>
-    );
-}
-
-
-// TabButton and Spinner remain the same
+function HighlightLegend() { return (<div className="mt-3 text-xs text-gray-400 highlight-legend flex items-center space-x-4"><span className="font-medium">Key:</span><div className="flex items-center"><span style={{ backgroundColor: '#FFFFFF', color: '#2b323f', padding: '1px 4px', borderRadius: '3px', marginRight: '5px', fontWeight: '500' }}>White</span><span className="text-gray-400">- High AI Confidence</span></div><div className="flex items-center"><span style={{ backgroundColor: '#4b5563', color: '#FDFDF1', padding: '1px 4px', borderRadius: '3px', marginRight: '5px' }}>Grey</span><span className="text-gray-400">- Medium AI Confidence</span></div></div>); }
 function TabButton({ title, isActive, onClick }) { return (<button onClick={onClick} className={`flex-1 py-4 px-2 font-medium text-center transition-all duration-200 outline-none ${ isActive ? 'border-b-4 border-milk text-milk' : 'text-gray-400 hover:bg-gray-700/30 hover:text-gray-200'}`}>{title}</button>); }
-function Spinner() { return (<svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-gray-blue" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>); }
+function Spinner({ text = "" }) { return (<><svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-gray-blue" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>{text && <span>{text}</span>}</>); }
 
-// AiResultDisplay remains the same (displays score, justification)
-function AiResultDisplay({ result }) {
+// --- Updated AiResultDisplay to include Paraphrase Button ---
+function AiResultDisplay({ result, onParaphraseClick, isParaphrasing }) {
     const score = result ? Math.round(result.aiScore) : 0;
     const color = score > 75 ? 'text-red-400' : score > 40 ? 'text-yellow-400' : 'text-green-400';
     const confidence = score > 75 ? 'High Confidence' : score > 40 ? 'Medium Confidence' : 'Low Confidence';
-    // Check both arrays now
     const sentencesDetected = result && ( (Array.isArray(result.highConfidenceSentences) && result.highConfidenceSentences.length > 0) || (Array.isArray(result.mediumConfidenceSentences) && result.mediumConfidenceSentences.length > 0) );
+    const showParaphraseButton = score > 10; // Only show if AI score is significant
 
     return (
-        <div className="bg-gray-900/50 p-6 rounded-lg border border-gray-700 animate-fade-in h-full flex flex-col">
-            <h3 className="text-xl font-semibold text-white mb-4 text-center">AI Detection Result</h3>
-            <div className="flex items-center justify-center space-x-4 mb-4">
-                <div className={`text-6xl font-bold ${color}`}>{score}%</div>
-                <div className="text-lg text-center">
-                    <div className="font-semibold text-gray-200">Likely AI-Generated</div>
-                    <div className={`text-sm ${color}`}>{confidence}</div>
+        <div className="bg-gray-900/50 p-6 rounded-lg border border-gray-700 animate-fade-in h-full flex flex-col justify-between">
+            <div> {/* Main content */}
+                <h3 className="text-xl font-semibold text-white mb-4 text-center">AI Detection Result</h3>
+                <div className="flex items-center justify-center space-x-4 mb-4">
+                    <div className={`text-6xl font-bold ${color}`}>{score}%</div>
+                    <div className="text-lg text-center">
+                        <div className="font-semibold text-gray-200">Likely AI-Generated</div>
+                        <div className={`text-sm ${color}`}>{confidence}</div>
+                    </div>
+                </div>
+                <div className="w-full bg-gray-700 rounded-full h-4 overflow-hidden mb-4">
+                    <div className={`h-4 rounded-full transition-all duration-500 ease-in-out ${ score > 75 ? 'bg-red-500' : score > 40 ? 'bg-yellow-500' : 'bg-green-500'}`} style={{ width: `${score}%` }}></div>
+                </div>
+                <div>
+                    <h4 className="font-semibold text-gray-200">Justification:</h4>
+                    <p className="text-gray-400 italic text-sm">"{result?.justification || 'N/A'}"</p>
+                </div>
+                <div className="mt-4 text-sm text-gray-500 text-center">
+                    {sentencesDetected ? 'Highlighted sentences shown in the text input.' : 'No specific AI sentences detected.'}
                 </div>
             </div>
-            <div className="w-full bg-gray-700 rounded-full h-4 overflow-hidden mb-4">
-                <div className={`h-4 rounded-full transition-all duration-500 ease-in-out ${ score > 75 ? 'bg-red-500' : score > 40 ? 'bg-yellow-500' : 'bg-green-500'}`} style={{ width: `${score}%` }}></div>
-            </div>
-            <div>
-                <h4 className="font-semibold text-gray-200">Justification:</h4>
-                <p className="text-gray-400 italic text-sm">"{result?.justification || 'N/A'}"</p> {/* Smaller justification */}
-            </div>
-            <div className="mt-4 text-sm text-gray-500 text-center flex-grow flex items-end justify-center">
-                {sentencesDetected ? 'Highlighted sentences shown in the text input area (see key below input).' : 'No specific AI sentences detected with high/medium confidence.'}
-            </div>
+
+            {/* Paraphrase Button Section */}
+            {showParaphraseButton && (
+                <div className="mt-6 border-t border-gray-700 pt-4">
+                    <p className="text-xs text-gray-400 mb-2 text-center">Make it sound more human? Try paraphrasing (beta).</p>
+                    <button
+                        onClick={onParaphraseClick}
+                        disabled={isParaphrasing}
+                        className="w-full p-3 bg-gray-600 text-milk font-medium rounded-lg shadow-sm hover:bg-gray-500 transition duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center"
+                    >
+                        {isParaphrasing ? <Spinner text="Paraphrasing..." /> : 'Paraphrase Text'}
+                    </button>
+                    <p className="text-[10px] text-gray-500 mt-1 text-center">Note: Review paraphrased text carefully. AI score may not always decrease.</p>
+                </div>
+            )}
         </div>
     );
 }
+
 
 // ParaphraseResultDisplay remains the same
 function ParaphraseResultDisplay({ result }) {
