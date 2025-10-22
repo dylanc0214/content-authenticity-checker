@@ -2,12 +2,37 @@
 @tailwind components;
 @tailwind utilities;
 
-/* This is for your new highlight feature */
-mark {
-    /* Use your new milk color for the highlight */
-    background-color: #FDFDF1;
-    color: #2b323f; /* Use gray-blue for the text so it's readable */
-    padding: 2px 4px;
-    border-radius: 4px;
-    font-weight: 600;
+/* --- NEW Highlight Styles --- */
+/* High Confidence AI */
+mark.ai-highlight-high {
+    background-color: #FFFFFF; /* White */
+    color: #2b323f; /* Gray Blue Text */
+    padding: 1px 3px; /* Slightly less padding */
+    border-radius: 3px;
+    font-weight: 500; /* Slightly bolder */
 }
+
+/* Medium Confidence AI */
+mark.ai-highlight-medium {
+    background-color: #4b5563; /* Tailwind gray-600 - a medium gray */
+    color: #FDFDF1; /* Milk Text */
+    padding: 1px 3px;
+    border-radius: 3px;
+}
+
+/* Ensure no default browser styling interferes */
+mark {
+    background-color: transparent;
+    color: inherit;
+    padding: 0;
+    border-radius: 0;
+}
+
+/* Optional: Style for the legend */
+.highlight-legend span {
+    display: inline-block;
+    padding: 1px 4px;
+    border-radius: 3px;
+    margin-right: 5px;
+}
+
