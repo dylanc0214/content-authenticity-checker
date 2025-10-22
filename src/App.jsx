@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react'; // Removed useEffect as it wasn't used directly
 
 // --- Constants ---
 const AI_DETECTOR_TAB = 'ai';
@@ -7,6 +7,7 @@ const PARAPHRASE_CHECKER_TAB = 'paraphrase';
 // --- Main App Component ---
 export default function App() {
     const [activeTab, setActiveTab] = useState(AI_DETECTOR_TAB);
+    // inputText state is mainly for the initial render of the textarea
     const [inputText, setInputText] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState(null);
@@ -15,8 +16,8 @@ export default function App() {
     const [aiResult, setAiResult] = useState(null);
     const [paraphraseResult, setParaphraseResult] = useState(null);
 
-    // This ref will hold the editable div
-    const editableDivRef = useRef(null);
+    // This ref will hold the editable div OR the textarea
+    const inputRef = useRef(null);
 
     // A new state to hold the HTML content for the div
     const [highlightedContent, setHighlightedContent] = useState('');
@@ -59,14 +60,16 @@ export default function App() {
             if (result.candidates && result.candidates[0]?.content?.parts?.[0]?.text) {
                 return JSON.parse(result.candidates[0].content.parts[0].text);
             } else {
+                console.error("Unexpected API response structure:", result);
                 throw new Error("Invalid response from AI detector.");
             }
         } catch (err) {
-            if (retries > 0 && err.message.includes("429")) {
+            if (retries > 0 && err.message.includes("429")) { // Basic rate limit check
                 await new Promise(res => setTimeout(res, delay));
                 return callGeminiApi(text, retries - 1, delay * 2);
             } else {
-                throw err;
+                console.error("AI Detector API Error:", err); // Log the actual error
+                throw err; // Re-throw the error
             }
         }
     };
@@ -77,7 +80,7 @@ export default function App() {
             setTimeout(() => {
                 resolve({
                     plagiarismScore: Math.floor(Math.random() * 25) + 5,
-                    sources: [{ url: 'https://www.simulated-source-one.com/article/example', snippet: '...', matchPercent: 12 }, { url: 'https://www.fake-journal-entry.org/page/2', snippet: '...', matchPercent: 8 }]
+                    sources: [{ url: 'https://www.simulated-source-one.com/article/example', snippet: '...this part of the text seems very similar...', matchPercent: 12 }, { url: 'https://www.fake-journal-entry.org/page/2', snippet: '...potential match for the phrase...', matchPercent: 8 }]
                 });
             }, 1500);
         });
@@ -87,23 +90,33 @@ export default function App() {
     const escapeRegExp = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
     // --- NEW: Function to generate and set highlighted HTML ---
-    const generateHighlightedHtml = (originalText, sentencesToHighlight) => {
+    const generateHighlightedHtml = (originalText, sentencesToHighlight = []) => {
         let highlightedText = originalText;
         // Sanitize text for security before injecting as HTML
         highlightedText = highlightedText
             .replace(/&/g, "&amp;")
             .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;");
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
 
-        // Replace newlines for proper HTML rendering
+        // Replace newlines for proper HTML rendering BEFORE highlighting
         highlightedText = highlightedText.replace(/\n/g, '<br />');
 
-        if (sentencesToHighlight && sentencesToHighlight.length > 0) {
-            sentencesToHighlight.forEach(sentence => {
+        // Ensure sentencesToHighlight is always an array
+        const sentences = Array.isArray(sentencesToHighlight) ? sentencesToHighlight : [];
+
+        if (sentences.length > 0) {
+            sentences.forEach(sentence => {
+                // Also sanitize the sentence fragments before creating regex
                 const sanitizedSentence = sentence
                     .replace(/&/g, "&amp;")
                     .replace(/</g, "&lt;")
-                    .replace(/>/g, "&gt;");
+                    .replace(/>/g, "&gt;")
+                    .replace(/"/g, "&quot;")
+                    .replace(/'/g, "&#039;");
+
+                // Escape regex special characters
                 const regex = new RegExp(escapeRegExp(sanitizedSentence), 'g');
                 highlightedText = highlightedText.replace(regex, `<mark>$&</mark>`);
             });
@@ -111,11 +124,16 @@ export default function App() {
         return highlightedText;
     };
 
+
     // --- Event Handlers ---
     const handleSubmit = async () => {
-        const currentText = editableDivRef.current ? editableDivRef.current.innerText : inputText;
+        // Get text from the correct element (div or textarea)
+        const currentText = inputRef.current ? (inputRef.current.tagName === 'TEXTAREA' ? inputRef.current.value : inputRef.current.innerText) : '';
+
         if (!currentText.trim()) {
             setError("Please enter some text to check.");
+            // Ensure highlighted content is cleared if input is empty
+            setHighlightedContent(generateHighlightedHtml('', []));
             return;
         }
 
@@ -123,25 +141,28 @@ export default function App() {
         setError(null);
         setAiResult(null);
         setParaphraseResult(null);
+        // Set initial highlighted content (plain text) while loading
+        setHighlightedContent(generateHighlightedHtml(currentText, []));
+
 
         try {
             if (activeTab === AI_DETECTOR_TAB) {
                 const result = await callGeminiApi(currentText);
                 setAiResult(result);
-                // NEW: Set the highlighted content after getting the result
+                // Set the highlighted content after getting the result
                 const html = generateHighlightedHtml(currentText, result.aiSentences);
                 setHighlightedContent(html);
             }
             else if (activeTab === PARAPHRASE_CHECKER_TAB) {
                 const result = await simulateParaphraseCheck(currentText);
                 setParaphraseResult(result);
-                // Paraphrase checker doesn't highlight, so just show plain text
+                // Paraphrase checker doesn't highlight, so just show plain text HTML
                 const html = generateHighlightedHtml(currentText, []);
                 setHighlightedContent(html);
             }
         } catch (err) {
             setError(`Failed to get result: ${err.message}. Please try again.`);
-            // On error, still show the text they entered
+            // On error, still show the text they entered as plain text HTML
             const html = generateHighlightedHtml(currentText, []);
             setHighlightedContent(html);
         } finally {
@@ -156,18 +177,26 @@ export default function App() {
         setParaphraseResult(null);
         setError(null);
         setIsLoading(false);
-        // Reset highlighting
-        const currentText = editableDivRef.current ? editableDivRef.current.innerText : inputText;
+        // Reset highlighting to plain text
+        const currentText = inputRef.current ? (inputRef.current.tagName === 'TEXTAREA' ? inputRef.current.value : inputRef.current.innerText) : inputText; // Use inputText if ref is null initially
         setHighlightedContent(generateHighlightedHtml(currentText, []));
     };
 
+    // Determine if there is a result to display
     const hasResult = aiResult || paraphraseResult;
+
+    // Get the current text content for the textarea/div
+    // Use innerText for div, value for textarea, fallback to inputText state
+    const currentInputValue = inputRef.current
+        ? (inputRef.current.tagName === 'TEXTAREA' ? inputRef.current.value : inputRef.current.innerText)
+        : inputText;
+
 
     // --- Render ---
     return (
         <div className="flex justify-center items-start min-h-screen bg-gray-900 font-sans p-4 pt-10">
-            {/* Use a larger max-width for the side-by-side view */}
-            <div className={`w-full ${hasResult ? 'max-w-6xl' : 'max-w-2xl'} bg-gray-blue rounded-xl shadow-2xl overflow-hidden my-8 transition-all duration-500`}>
+            {/* Container adapts width based on whether results are shown */}
+            <div className={`w-full ${hasResult ? 'max-w-6xl' : 'max-w-2xl'} bg-gray-blue rounded-xl shadow-2xl overflow-hidden my-8 transition-all duration-500 ease-in-out`}>
                 <header className="p-6">
                     <h1 className="text-3xl font-bold text-white text-center">
                         Content Authenticity Checker
@@ -182,25 +211,33 @@ export default function App() {
                     <TabButton title="Paraphrase Checker" isActive={activeTab === PARAPHRASE_CHECKER_TAB} onClick={() => handleTabChange(PARAPHRASE_CHECKER_TAB)} />
                 </nav>
 
-                {/* --- NEW CONDITIONAL LAYOUT --- */}
-                <div className={`grid ${hasResult ? 'grid-cols-1 md:grid-cols-2 gap-4' : 'grid-cols-1'} transition-all duration-500`}>
+                {/* --- Main Content Grid ---
+              - Default: 1 column
+              - When hasResult is true: 1 column on small screens, 2 columns on medium+ screens
+        --- */}
+                <div className={`grid ${hasResult ? 'grid-cols-1 md:grid-cols-2 gap-x-8' : 'grid-cols-1'} transition-all duration-500 ease-in-out`}>
 
-                    {/* --- Column 1: Text Input --- */}
-                    <div className="p-6 md:p-8">
-                        {/* We switch between a div and textarea based on whether there's a result */}
+                    {/* --- Column 1: Text Input Area --- */}
+                    <div className="p-6 md:p-8 flex flex-col">
+                        {/* Switch between editable div (for highlighting) and textarea (for initial input) */}
                         {hasResult ? (
                             <div
-                                ref={editableDivRef}
-                                className="w-full h-96 p-4 border border-gray-700 rounded-lg bg-gray-900 text-gray-200 focus:outline-none focus:ring-2 focus:ring-milk overflow-y-auto"
+                                ref={inputRef} // Use the ref here
+                                className="w-full h-96 p-4 border border-gray-700 rounded-lg bg-gray-900 text-gray-200 focus:outline-none focus:ring-2 focus:ring-milk overflow-y-auto flex-grow" // Added flex-grow
+                                // Use dangerouslySetInnerHTML to render highlights
                                 dangerouslySetInnerHTML={{ __html: highlightedContent }}
+                                // Make it act like an input (optional, styling might be needed)
+                                contentEditable={false} // Make it non-editable after analysis
+                                suppressContentEditableWarning={true}
                             />
                         ) : (
                             <textarea
-                                ref={editableDivRef}
-                                className="w-full h-96 p-4 border border-gray-700 rounded-lg bg-gray-900 text-gray-200 focus:outline-none focus:ring-2 focus:ring-milk resize-none placeholder-gray-500"
+                                ref={inputRef} // Use the ref here
+                                className="w-full h-96 p-4 border border-gray-700 rounded-lg bg-gray-900 text-gray-200 focus:outline-none focus:ring-2 focus:ring-milk resize-none placeholder-gray-500 flex-grow" // Added flex-grow
                                 placeholder="Paste text here to check..."
+                                // Control the textarea value with state before the first analysis
+                                value={inputText}
                                 onChange={(e) => setInputText(e.target.value)}
-                                defaultValue={inputText}
                                 disabled={isLoading}
                             />
                         )}
@@ -219,34 +256,43 @@ export default function App() {
                         )}
                     </div>
 
-                    {/* --- Column 2: Results (Only shows if there is a result) --- */}
-                    <div className="p-6 md:p-8">
-                        {isLoading && (
-                            <div className="text-center text-gray-400 h-full flex items-center justify-center">
-                                Checking... this might take a moment.
-                            </div>
-                        )}
+                    {/* --- Column 2: Results Area (Only rendered if hasResult is true) --- */}
+                    {hasResult && (
+                        <div className="p-6 md:p-8 border-t md:border-t-0 md:border-l border-gray-700"> {/* Add border for separation */}
+                            {isLoading && (
+                                <div className="text-center text-gray-400 h-full flex items-center justify-center">
+                                    Checking...
+                                </div>
+                            )}
 
-                        {activeTab === AI_DETECTOR_TAB && aiResult && !isLoading && (
-                            <AiResultDisplay result={aiResult} />
-                        )}
+                            {!isLoading && activeTab === AI_DETECTOR_TAB && aiResult && (
+                                <AiResultDisplay result={aiResult} />
+                            )}
 
-                        {activeTab === PARAPHRASE_CHECKER_TAB && paraphraseResult && !isLoading && (
-                            <ParaphraseResultDisplay result={paraphraseResult} />
-                        )}
-                    </div>
+                            {!isLoading && activeTab === PARAPHRASE_CHECKER_TAB && paraphraseResult && (
+                                <ParaphraseResultDisplay result={paraphraseResult} />
+                            )}
+                        </div>
+                    )}
 
-                </div>
-            </div>
-        </div>
+                </div> {/* End of grid */}
+            </div> {/* End of main card */}
+        </div> // End of page container
     );
 }
 
 // --- Helper Components ---
-// (TabButton and Spinner are the same as before)
+// (TabButton and Spinner remain the same)
 function TabButton({ title, isActive, onClick }) {
     return (
-        <button onClick={onClick} className={`flex-1 py-4 px-2 font-medium text-center transition-all duration-200 outline-none ${isActive ? 'border-b-4 border-milk text-milk' : 'text-gray-400 hover:bg-gray-700/30 hover:text-gray-200'}`}>
+        <button
+            onClick={onClick}
+            className={`flex-1 py-4 px-2 font-medium text-center transition-all duration-200 outline-none ${
+                isActive
+                    ? 'border-b-4 border-milk text-milk' // Active tab uses milk color
+                    : 'text-gray-400 hover:bg-gray-700/30 hover:text-gray-200' // Inactive tab
+            }`}
+        >
             {title}
         </button>
     );
@@ -261,74 +307,102 @@ function Spinner() {
     );
 }
 
-// --- AiResultDisplay is now simpler ---
-// It no longer needs to display the highlighted text
+
+// AiResultDisplay: Simplified, doesn't need originalText anymore
 function AiResultDisplay({ result }) {
-    const score = Math.round(result.aiScore);
+    const score = result ? Math.round(result.aiScore) : 0;
     const color = score > 75 ? 'text-red-400' : score > 40 ? 'text-yellow-400' : 'text-green-400';
+    const confidence = score > 75 ? 'High Confidence' : score > 40 ? 'Medium Confidence' : 'Low Confidence';
+    const sentencesDetected = result && Array.isArray(result.aiSentences) && result.aiSentences.length > 0;
 
     return (
-        <div className="bg-gray-900/50 p-6 rounded-lg border border-gray-700 animate-fade-in h-full">
-            <h3 className="text-xl font-semibold text-white mb-4">AI Detection Result</h3>
+        <div className="bg-gray-900/50 p-6 rounded-lg border border-gray-700 animate-fade-in h-full flex flex-col"> {/* Ensure it takes full height */}
+            <h3 className="text-xl font-semibold text-white mb-4 text-center">AI Detection Result</h3>
             <div className="flex items-center justify-center space-x-4 mb-4">
                 <div className={`text-6xl font-bold ${color}`}>{score}%</div>
-                <div className="text-lg">
+                <div className="text-lg text-center">
                     <div className="font-semibold text-gray-200">Likely AI-Generated</div>
-                    <div className={`text-sm ${color}`}>
-                        {score > 75 ? 'High Confidence' : score > 40 ? 'Medium Confidence' : 'Low Confidence'}
-                    </div>
+                    <div className={`text-sm ${color}`}>{confidence}</div>
                 </div>
             </div>
-            <div className="w-full bg-gray-700 rounded-full h-4 overflow-hidden">
-                <div className={`h-4 rounded-full transition-all duration-500 ${score > 75 ? 'bg-red-500' : score > 40 ? 'bg-yellow-500' : 'bg-green-500'}`} style={{ width: `${score}%` }}></div>
+            <div className="w-full bg-gray-700 rounded-full h-4 overflow-hidden mb-4">
+                <div
+                    className={`h-4 rounded-full transition-all duration-500 ease-in-out ${
+                        score > 75 ? 'bg-red-500' : score > 40 ? 'bg-yellow-500' : 'bg-green-500'
+                    }`}
+                    style={{ width: `${score}%` }}
+                ></div>
             </div>
-            <div className="mt-4">
+            <div>
                 <h4 className="font-semibold text-gray-200">Justification:</h4>
-                <p className="text-gray-400 italic">"{result.justification}"</p>
+                <p className="text-gray-400 italic">"{result?.justification || 'N/A'}"</p>
             </div>
-            {result.aiSentences && result.aiSentences.length === 0 && (
-                <div className="mt-6 text-center text-gray-400 p-4 border border-dashed border-gray-700 rounded-lg">
-                    No specific AI sentences were flagged with high confidence. The score is based on the overall writing style.
-                </div>
-            )}
+            {/* Message about where highlights are */}
+            <div className="mt-4 text-sm text-gray-500 text-center flex-grow flex items-end justify-center"> {/* Pushes to bottom */}
+                {sentencesDetected ? 'Highlighted sentences are shown in the text input area.' : 'No specific AI sentences detected with high confidence.'}
+            </div>
         </div>
     );
 }
 
-// ParaphraseResultDisplay is the same as before
+
+// ParaphraseResultDisplay remains largely the same
 function ParaphraseResultDisplay({ result }) {
-    const score = Math.round(result.plagiarismScore);
+    const score = result ? Math.round(result.plagiarismScore) : 0;
     const color = score > 15 ? 'text-red-400' : score > 5 ? 'text-yellow-400' : 'text-green-400';
+    const matchLevel = score > 15 ? 'High Match' : score > 5 ? 'Possible Match' : 'Likely Original';
 
     return (
-        <div className="bg-gray-900/50 p-6 rounded-lg border border-gray-700 animate-fade-in h-full">
+        <div className="bg-gray-900/50 p-6 rounded-lg border border-gray-700 animate-fade-in h-full flex flex-col"> {/* Ensure it takes full height */}
             <div className="bg-yellow-900/50 border-l-4 border-yellow-500 text-yellow-300 p-4 rounded-md mb-4">
                 <h4 className="font-bold">Simulation Mode</h4>
-                <p className="text-sm">This is a simulated result. To check against real-world sources, you'll need to integrate a paid plagiarism API.</p>
+                <p className="text-sm">This is a simulated result. Integrate a real plagiarism API for accurate checks.</p>
             </div>
-            <h3 className="text-xl font-semibold text-white mb-4">Paraphrase Check Result</h3>
+
+            <h3 className="text-xl font-semibold text-white mb-4 text-center">Paraphrase Check Result</h3>
+
             <div className="flex items-center justify-center space-x-4 mb-4">
                 <div className={`text-6xl font-bold ${color}`}>{score}%</div>
-                <div className="text-lg">
+                <div className="text-lg text-center">
                     <div className="font-semibold text-gray-200">Potential Plagiarism</div>
-                    <div className={`text-sm ${color}`}>{score > 15 ? 'High Match' : score > 5 ? 'Possible Match' : 'Likely Original'}</div>
+                    <div className={`text-sm ${color}`}>{matchLevel}</div>
                 </div>
             </div>
-            <div className="w-full bg-gray-700 rounded-full h-4 overflow-hidden">
-                <div className={`h-4 rounded-full transition-all duration-500 ${score > 15 ? 'bg-red-500' : score > 5 ? 'bg-yellow-500' : 'bg-green-500'}`} style={{ width: `${score}%` }}></div>
+            <div className="w-full bg-gray-700 rounded-full h-4 overflow-hidden mb-4">
+                <div
+                    className={`h-4 rounded-full transition-all duration-500 ease-in-out ${
+                        score > 15 ? 'bg-red-500' : score > 5 ? 'bg-yellow-500' : 'bg-green-500'
+                    }`}
+                    style={{ width: `${score}%` }}
+                ></div>
             </div>
-            <div className="mt-6">
+
+            <div className="mt-6 flex-grow overflow-y-auto"> {/* Allow scrolling if sources are many */}
                 <h4 className="font-semibold text-gray-200 mb-2">Simulated Matched Sources:</h4>
-                <ul className="space-y-3">
-                    {result.sources.map((source, index) => (
-                        <li key={index} className="border border-gray-700 p-3 rounded-lg bg-gray-800">
-                            <a href={source.url} target="_blank" rel="noopener noreferrer" className="text-milk hover:underline font-medium block truncate">{source.url}</a>
-                            <p className="text-gray-400 text-sm mt-1">"{source.snippet}"</p>
-                            <span className="text-xs font-semibold bg-red-800/50 text-red-300 px-2 py-0.5 rounded-full mt-2 inline-block">{source.matchPercent}% Match</span>
-                        </li>
-                    ))}
-                </ul>
+                {result?.sources && result.sources.length > 0 ? (
+                    <ul className="space-y-3">
+                        {result.sources.map((source, index) => (
+                            <li key={index} className="border border-gray-700 p-3 rounded-lg bg-gray-800">
+                                <a
+                                    href={source.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-milk hover:underline font-medium block truncate text-sm" // Smaller text for URL
+                                >
+                                    {source.url}
+                                </a>
+                                <p className="text-gray-400 text-xs mt-1 italic">"{source.snippet}"</p> {/* Smaller text */}
+                                <span className="text-xs font-semibold bg-red-800/50 text-red-300 px-2 py-0.5 rounded-full mt-2 inline-block">
+                  {source.matchPercent}% Match
+                </span>
+                            </li>
+                        ))}
+                    </ul>
+                ) : (
+                    <p className="text-gray-500 text-sm italic">No simulated sources found.</p>
+                )}
             </div>
         </div>
     );
 }
+
