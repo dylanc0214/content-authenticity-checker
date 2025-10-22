@@ -22,8 +22,13 @@ export default async function handler(request, response) {
 
         const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
 
-        const systemPrompt = "You are an AI text detector. Analyze the following text and provide your assessment. Your response MUST be in the JSON format defined in the schema. Provide a score from 0 (very likely human) to 100 (very likely AI-generated) and a brief justification.";
+        // --- THIS IS THE UPDATED PROMPT ---
+        const systemPrompt = `You are an AI text detector. Analyze the following text and provide your assessment. Your response MUST be in the JSON format defined in the schema.
+1.  Provide an \`aiScore\` (a number from 0-100)
+2.  Provide a brief \`justification\` for the score.
+3.  Most importantly: Identify the *exact sentences* from the user's text that are most likely AI-generated. Return these sentences in the \`aiSentences\` array. Only include sentences with high confidence of being AI. If no sentences are detected, return an empty array.`;
 
+        // --- THIS IS THE UPDATED PAYLOAD & SCHEMA ---
         const payload = {
             contents: [{ parts: [{ text: text }] }],
             systemInstruction: {
@@ -34,10 +39,21 @@ export default async function handler(request, response) {
                 responseSchema: {
                     type: "OBJECT",
                     properties: {
-                        "aiScore": { "type": "NUMBER" },
-                        "justification": { "type": "STRING" }
+                        "aiScore": {
+                            "type": "NUMBER",
+                            "description": "A percentage score from 0 (definitely human) to 100 (definitely AI)."
+                        },
+                        "justification": {
+                            "type": "STRING",
+                            "description": "A brief, one-sentence justification for the score."
+                        },
+                        "aiSentences": {
+                            "type": "ARRAY",
+                            "items": { "type": "STRING" },
+                            "description": "An array of exact sentences from the input text that are most likely AI-generated."
+                        }
                     },
-                    required: ["aiScore", "justification"]
+                    required: ["aiScore", "justification", "aiSentences"]
                 }
             }
         };
