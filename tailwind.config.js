@@ -6,10 +6,12 @@ export default {
     ],
     theme: {
         extend: {
+            // --- ADD THIS SECTION ---
             colors: {
                 'gray-blue': '#2b323f',
-                'milk-orange': '#EC5E27',
+                'milk': '#FDFDF1',
             }
+            // --- END OF SECTION ---
         },
     },
     plugins: [],

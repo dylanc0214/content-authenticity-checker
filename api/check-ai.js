@@ -7,77 +7,56 @@ export default async function handler(request, response) {
     }
 
     try {
-        // 2. Get the text from the frontend's request
-        const { text } = request.body;
-        if (!text) {
-            return response.status(400).json({ error: 'Text is required' });
+        // 2. Get the *payload* from the frontend's request
+        // It's no longer just { text }, it's the full Gemini payload
+        const payload = request.body;
+
+        if (!payload || !payload.contents) {
+            // Basic check if payload looks like a Gemini request
+            return response.status(400).json({ error: 'Invalid request payload' });
         }
 
         // 3. Get your *secret* API key from Vercel's Environment Variables
         const apiKey = process.env.GEMINI_API_KEY;
         if (!apiKey) {
             console.error('GEMINI_API_KEY is not set');
-            return response.status(500).json({ error: 'API key not configured' });
+            // Don't reveal API key issues to the frontend
+            return response.status(500).json({ error: 'Server configuration error' });
         }
 
-        const apiUrl = `https://generativethinking.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
-
-        // --- THIS IS THE UPDATED PROMPT ---
-        const systemPrompt = `You are an AI text detector. Analyze the following text and provide your assessment. Your response MUST be in the JSON format defined in the schema.
-1.  Provide an \`aiScore\` (a number from 0-100)
-2.  Provide a brief \`justification\` for the score.
-3.  Most importantly: Identify the *exact sentences* from the user's text that are most likely AI-generated. Return these sentences in the \`aiSentences\` array. Only include sentences with high confidence of being AI. If no sentences are detected, return an empty array.`;
-
-        // --- THIS IS THE UPDATED PAYLOAD & SCHEMA ---
-        const payload = {
-            contents: [{ parts: [{ text: text }] }],
-            systemInstruction: {
-                parts: [{ text: systemPrompt }]
-            },
-            generationConfig: {
-                responseMimeType: "application/json",
-                responseSchema: {
-                    type: "OBJECT",
-                    properties: {
-                        "aiScore": {
-                            "type": "NUMBER",
-                            "description": "A percentage score from 0 (definitely human) to 100 (definitely AI)."
-                        },
-                        "justification": {
-                            "type": "STRING",
-                            "description": "A brief, one-sentence justification for the score."
-                        },
-                        "aiSentences": {
-                            "type": "ARRAY",
-                            "items": { "type": "STRING" },
-                            "description": "An array of exact sentences from the input text that are most likely AI-generated."
-                        }
-                    },
-                    required: ["aiScore", "justification", "aiSentences"]
-                }
-            }
-        };
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
 
         // 4. Call the Gemini API *from the server*
+        // We just forward the payload received from the frontend
         const geminiResponse = await fetch(apiUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            body: JSON.stringify(payload) // Forward the entire payload
         });
 
+        // Handle potential errors from the Gemini API
         if (!geminiResponse.ok) {
-            const errorText = await geminiResponse.text();
-            console.error('Gemini API Error:', errorText);
-            return response.status(geminiResponse.status).json({ error: `Gemini API Error: ${errorText}` });
+            let errorBody;
+            try {
+                errorBody = await geminiResponse.json(); // Try to parse JSON error
+            } catch (e) {
+                errorBody = await geminiResponse.text(); // Fallback to text error
+            }
+            console.error('Gemini API Error Status:', geminiResponse.status);
+            console.error('Gemini API Error Body:', errorBody);
+            // Send a generic error back to the frontend
+            return response.status(500).json({ error: `AI service failed (Status: ${geminiResponse.status})` });
         }
 
+        // If Gemini API call was successful, get the JSON result
         const result = await geminiResponse.json();
 
-        // 5. Send the result *back* to your frontend
+        // 5. Send the successful result *back* to your frontend
         return response.status(200).json(result);
 
     } catch (err) {
-        console.error('Serverless function error:', err);
+        // Catch any unexpected errors during the process
+        console.error('Serverless function internal error:', err);
         return response.status(500).json({ error: 'Internal Server Error' });
     }
 }

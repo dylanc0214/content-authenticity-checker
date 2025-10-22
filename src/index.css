@@ -4,8 +4,10 @@
 
 /* This is for your new highlight feature */
 mark {
-    background-color: #EC5E27;
-    color: #ffffff;
+    /* Use your new milk color for the highlight */
+    background-color: #FDFDF1;
+    color: #2b323f; /* Use gray-blue for the text so it's readable */
     padding: 2px 4px;
     border-radius: 4px;
+    font-weight: 600;
 }

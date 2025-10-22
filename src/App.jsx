@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 
 // --- Constants ---
 const AI_DETECTOR_TAB = 'ai';
@@ -21,7 +21,6 @@ export default function App() {
     // This function now asks the AI for *specific sentences*
     const callGeminiApi = async (text, retries = 3, delay = 1000) => {
 
-        // This is the new system prompt
         const systemPrompt = `You are an AI text detector. Analyze the following text and provide your assessment. Your response MUST be in the JSON format defined in the schema.
 1.  Provide an \`aiScore\` (a number from 0-100)
 2.  Provide a brief \`justification\` for the score.
@@ -58,12 +57,12 @@ export default function App() {
         };
 
         // We call *our own* backend function at /api/check-ai
-        // This code remains the same as before.
         try {
             const response = await fetch('/api/check-ai', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text: text })
+                // We pass the *full payload* to our backend
+                body: JSON.stringify(payload)
             });
 
             if (!response.ok) {
@@ -131,6 +130,7 @@ export default function App() {
 
         try {
             if (activeTab === AI_DETECTOR_TAB) {
+                // Pass the raw text to the API function
                 const result = await callGeminiApi(inputText);
                 setAiResult(result);
             }
@@ -147,7 +147,7 @@ export default function App() {
 
     const handleTabChange = (tab) => {
         setActiveTab(tab);
-        setInputText('');
+        // Don't clear text when switching tabs
         setAiResult(null);
         setParaphraseResult(null);
         setError(null);
@@ -185,7 +185,7 @@ export default function App() {
                 {/* --- Main Content Area (New Colors) --- */}
                 <main className="p-6 md:p-8">
           <textarea
-              className="w-full h-48 p-4 border border-gray-700 rounded-lg bg-gray-900 text-gray-200 focus:outline-none focus:ring-2 focus:ring-milk-orange resize-none placeholder-gray-500"
+              className="w-full h-48 p-4 border border-gray-700 rounded-lg bg-gray-900 text-gray-200 focus:outline-none focus:ring-2 focus:ring-milk resize-none placeholder-gray-500"
               placeholder={
                   activeTab === AI_DETECTOR_TAB
                       ? "Paste text here to check for AI generation..."
@@ -199,7 +199,8 @@ export default function App() {
                     <button
                         onClick={handleSubmit}
                         disabled={isLoading}
-                        className="w-full mt-4 p-4 bg-milk-orange text-white font-semibold rounded-lg shadow-md hover:bg-opacity-90 transition duration-300 disabled:bg-gray-600 disabled:cursor-not-allowed flex justify-center items-center"
+                        // Using bg-milk (your new color) for the button
+                        className="w-full mt-4 p-4 bg-milk text-gray-blue font-semibold rounded-lg shadow-md hover:bg-opacity-90 transition duration-300 disabled:bg-gray-600 disabled:cursor-not-allowed flex justify-center items-center"
                     >
                         {isLoading ? <Spinner /> : 'Analyze Text'}
                     </button>
@@ -240,7 +241,8 @@ function TabButton({ title, isActive, onClick }) {
             onClick={onClick}
             className={`flex-1 py-4 px-2 font-medium text-center transition-all duration-200 outline-none ${
                 isActive
-                    ? 'border-b-4 border-milk-orange text-milk-orange'
+                    // Using border-milk (your new color) for the active tab
+                    ? 'border-b-4 border-milk text-milk'
                     : 'text-gray-400 hover:bg-gray-700/30 hover:text-gray-200'
             }`}
         >
@@ -251,7 +253,8 @@ function TabButton({ title, isActive, onClick }) {
 
 function Spinner() {
     return (
-        <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        // Spinner color changed to gray-blue to match button text
+        <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-gray-blue" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
         </svg>
@@ -260,7 +263,8 @@ function Spinner() {
 
 // --- This helper function is needed to safely highlight text ---
 function escapeRegExp(string) {
-    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // $& means the whole matched string
+    // $& means the whole matched string
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function AiResultDisplay({ result, originalText }) {
@@ -271,15 +275,32 @@ function AiResultDisplay({ result, originalText }) {
     // --- NEW HIGHLIGHTING LOGIC ---
     const getHighlightedText = () => {
         let highlightedText = originalText;
+        // We need to escape HTML characters from the user's text first
+        highlightedText = highlightedText
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
 
-        // We need to escape newlines for the HTML render
+        // Then replace newlines with <br> tags for correct HTML rendering
         highlightedText = highlightedText.replace(/\n/g, '<br />');
 
         if (result.aiSentences && result.aiSentences.length > 0) {
             result.aiSentences.forEach(sentence => {
                 // We must escape the sentence so it can be used in a Regex
-                const escapedSentence = escapeRegExp(sentence);
+                // We also need to escape the HTML chars in the sentence *before* escaping regex chars
+                const escapedSentence = escapeRegExp(
+                    sentence
+                        .replace(/&/g, "&amp;")
+                        .replace(/</g, "&lt;")
+                        .replace(/>/g, "&gt;")
+                        .replace(/"/g, "&quot;")
+                        .replace(/'/g, "&#039;")
+                );
+
                 const regex = new RegExp(escapedSentence, 'g');
+                // The <mark> tag is now styled by src/index.css
                 highlightedText = highlightedText.replace(regex, `<mark>$&</mark>`);
             });
         }
@@ -320,8 +341,20 @@ function AiResultDisplay({ result, originalText }) {
                     <h4 className="font-semibold text-gray-200 mb-3">Detected AI Text:</h4>
                     <div
                         className="p-4 border border-gray-700 rounded-lg bg-gray-900 text-gray-300 max-h-48 overflow-y-auto leading-relaxed"
+                        // This is how you render the <mark> tags
                         dangerouslySetInnerHTML={{ __html: highlightedHtml }}
                     />
+                </div>
+            )}
+            {/* Show this if 0 sentences are detected */}
+            {result.aiSentences && result.aiSentences.length === 0 && (
+                <div className="mt-6">
+                    <h4 className="font-semibold text-gray-200 mb-3">Detected AI Text:</h4>
+                    <div
+                        className="p-4 border border-gray-700 rounded-lg bg-gray-900 text-gray-400 max-h-48 overflow-y-auto leading-relaxed"
+                    >
+                        No specific AI-generated sentences were detected with high confidence.
+                    </div>
                 </div>
             )}
         </div>
@@ -372,7 +405,8 @@ function ParaphraseResultDisplay({ result }) {
                                 href={source.url}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="text-milk-orange hover:underline font-medium block truncate"
+                                // Using text-milk (your new color) for the link
+                                className="text-milk hover:underline font-medium block truncate"
                             >
                                 {source.url}
                             </a>
