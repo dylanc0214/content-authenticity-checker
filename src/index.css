@@ -2,10 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(10px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-.animate-fade-in {
-    animation: fadeIn 0.5s ease-out;
+/* This is for your new highlight feature */
+mark {
+    background-color: #EC5E27;
+    color: #ffffff;
+    padding: 2px 4px;
+    border-radius: 4px;
 }
