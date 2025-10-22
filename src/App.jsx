@@ -6,16 +6,16 @@ const PARAPHRASE_CHECKER_TAB = 'paraphrase';
 
 // --- Main App Component ---
 export default function App() {
-    const [activeTab, setActiveTab] = (useState < string > AI_DETECTOR_TAB);
-    const [inputText, setInputText] = (useState < string > '');
-    const [isLoading, setIsLoading] = (useState < boolean > false);
-    const [error, setError] = (useState < string | null > null);
+    const [activeTab, setActiveTab] = useState(AI_DETECTOR_TAB);
+    const [inputText, setInputText] = useState('');
+    const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState(null);
 
     // State for AI Detector
-    const [aiResult, setAiResult] = (useState < any | null > null);
+    const [aiResult, setAiResult] = useState(null);
 
     // State for Paraphrase Checker
-    const [paraphraseResult, setParaphraseResult] = (useState < any | null > null);
+    const [paraphraseResult, setParaphraseResult] = useState(null);
 
     // --- API Call: AI Detector (REAL & SECURE) ---
     // This function now asks the AI for *specific sentences*
@@ -387,3 +387,4 @@ function ParaphraseResultDisplay({ result }) {
         </div>
     );
 }
+
