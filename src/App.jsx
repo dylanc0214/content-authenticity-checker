@@ -196,8 +196,8 @@ export default function App() {
             <div className={`w-full ${hasResult ? 'max-w-6xl' : 'max-w-2xl'} bg-gray-blue rounded-xl shadow-2xl overflow-hidden my-8 transition-all duration-500 ease-in-out`}>
                 {/* Header and Tabs */}
                 <header className="p-6">
-                    <h1 className="text-3xl font-bold text-white text-center">Content Authenticity Checker</h1>
-                    <p className="text-gray-400 text-center mt-1">Check AI generation and potential plagiarism.</p>
+                    <h1 className="text-3xl font-bold text-white text-center">OriCheck</h1>
+                    <p className="text-gray-400 text-center mt-1">Your Ori checker for AI & Plagiarism.</p>
                 </header>
                 <nav className="flex bg-gray-blue/50 border-b border-gray-700">
                     <TabButton title="AI Detector" isActive={activeTab === AI_DETECTOR_TAB} onClick={() => handleTabChange(AI_DETECTOR_TAB)} />
