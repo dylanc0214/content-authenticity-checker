@@ -479,7 +479,7 @@ function AiResultDisplay({ result, onParaphraseClick, isParaphrasing, selectedSt
                         {isParaphrasing ? <Spinner text="Paraphrasing..." /> : `Paraphrase (${PARAPHRASE_STYLES.find(s => s.id === selectedStyle)?.label || 'Standard'})`}
                     </button>
                     {/* Disclaimer */}
-                    <p className="text-[10px] text-gray-500 mt-1 text-center">Note: Review paraphrased text carefully. AI score may not always decrease significantly.</p>
+                    <p className="text-[10px] text-gray-500 mt-1 text-center">Attempts to humanize using varied sentences & simpler words. Review carefully. AI score reduction not guaranteed.</p>
                 </div>
             )}
         </div>
